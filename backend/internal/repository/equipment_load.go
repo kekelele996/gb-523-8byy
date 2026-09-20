@@ -10,6 +10,7 @@ import (
 	"datacenter-thermal-capacity-planner/backend/internal/model"
 	"datacenter-thermal-capacity-planner/backend/internal/web"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type EquipmentLoadRepository struct {
@@ -47,6 +48,43 @@ func (r *EquipmentLoadRepository) AllReady(ctx context.Context) ([]model.Equipme
 	var loads []model.EquipmentLoad
 	if err := r.db.WithContext(ctx).Where("load_status = ?", "ready").Order("id ASC").Find(&loads).Error; err != nil {
 		return nil, fmt.Errorf("list ready equipment loads: %w", err)
+	}
+	return loads, nil
+}
+
+func (r *EquipmentLoadRepository) All(ctx context.Context) ([]model.EquipmentLoad, error) {
+	var loads []model.EquipmentLoad
+	if err := r.db.WithContext(ctx).Order("id ASC").Find(&loads).Error; err != nil {
+		return nil, fmt.Errorf("list all equipment loads: %w", err)
+	}
+	return loads, nil
+}
+
+// FindByIDsLockedTx re-reads selected loads with a shared row lock inside an
+// existing transaction, used by approval input consistency checks.
+func (r *EquipmentLoadRepository) FindByIDsLockedTx(ctx context.Context, tx *gorm.DB, ids []uint) ([]model.EquipmentLoad, error) {
+	var loads []model.EquipmentLoad
+	query := tx.WithContext(ctx).Where("id IN ?", ids).Order("id ASC")
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+	}
+	if err := query.Find(&loads).Error; err != nil {
+		return nil, fmt.Errorf("list locked equipment loads: %w", err)
+	}
+	if len(loads) != len(ids) {
+		return nil, web.Unprocessable("LOAD_NOT_FOUND", "one or more selected equipment loads no longer exist", nil)
+	}
+	return loads, nil
+}
+
+// FindByIDsTx reads selected loads inside an existing transaction.
+func (r *EquipmentLoadRepository) FindByIDsTx(ctx context.Context, tx *gorm.DB, ids []uint) ([]model.EquipmentLoad, error) {
+	var loads []model.EquipmentLoad
+	if err := tx.WithContext(ctx).Where("id IN ?", ids).Order("id ASC").Find(&loads).Error; err != nil {
+		return nil, fmt.Errorf("find equipment loads in tx: %w", err)
+	}
+	if len(loads) != len(ids) {
+		return nil, web.Unprocessable("LOAD_NOT_FOUND", "one or more selected equipment loads do not exist", nil)
 	}
 	return loads, nil
 }

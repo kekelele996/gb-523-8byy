@@ -10,6 +10,7 @@ import (
 	"datacenter-thermal-capacity-planner/backend/internal/model"
 	"datacenter-thermal-capacity-planner/backend/internal/web"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type RackRepository struct {
@@ -50,6 +51,29 @@ func (r *RackRepository) All(ctx context.Context) ([]model.Rack, error) {
 	err := r.db.WithContext(ctx).Preload("ThermalZone").Order("rack_code ASC").Find(&racks).Error
 	if err != nil {
 		return nil, fmt.Errorf("list all racks: %w", err)
+	}
+	return racks, nil
+}
+
+// AllLockedTx re-reads all racks with a shared row lock inside an existing
+// transaction, used by approval input consistency checks.
+func (r *RackRepository) AllLockedTx(ctx context.Context, tx *gorm.DB) ([]model.Rack, error) {
+	var racks []model.Rack
+	query := tx.WithContext(ctx).Order("rack_code ASC")
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+	}
+	if err := query.Find(&racks).Error; err != nil {
+		return nil, fmt.Errorf("list locked racks: %w", err)
+	}
+	return racks, nil
+}
+
+// AllTx reads all racks inside an existing transaction.
+func (r *RackRepository) AllTx(ctx context.Context, tx *gorm.DB) ([]model.Rack, error) {
+	var racks []model.Rack
+	if err := tx.WithContext(ctx).Order("rack_code ASC").Find(&racks).Error; err != nil {
+		return nil, fmt.Errorf("list racks in tx: %w", err)
 	}
 	return racks, nil
 }

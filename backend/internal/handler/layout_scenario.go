@@ -72,6 +72,23 @@ func (h *LayoutScenarioHandler) Evaluate(c *gin.Context) {
 	web.OK(c, item)
 }
 
+func (h *LayoutScenarioHandler) Rebuild(c *gin.Context) {
+	id, ok := web.ParamID(c)
+	if !ok {
+		return
+	}
+	var req dto.EvaluateScenarioRequest
+	if !web.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.service.Rebuild(c.Request.Context(), id, req.Version, auditFrom(c))
+	if err != nil {
+		web.Fail(c, err)
+		return
+	}
+	web.Created(c, item)
+}
+
 func (h *LayoutScenarioHandler) Transition(c *gin.Context) {
 	id, ok := web.ParamID(c)
 	if !ok {

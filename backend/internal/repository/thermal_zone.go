@@ -10,6 +10,7 @@ import (
 	"datacenter-thermal-capacity-planner/backend/internal/model"
 	"datacenter-thermal-capacity-planner/backend/internal/web"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ThermalZoneRepository struct {
@@ -64,6 +65,37 @@ func (r *ThermalZoneRepository) All(ctx context.Context) ([]model.ThermalZone, e
 	}
 	return zones, nil
 }
+
+// AllLockedTx re-reads all thermal zones with a shared row lock inside an
+// existing transaction, used by approval input consistency checks.
+func (r *ThermalZoneRepository) AllLockedTx(ctx context.Context, tx *gorm.DB) ([]model.ThermalZone, error) {
+	var zones []model.ThermalZone
+	query := tx.WithContext(ctx).Order("zone_code ASC")
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "SHARE"})
+	}
+	if err := query.Find(&zones).Error; err != nil {
+		return nil, fmt.Errorf("list locked thermal zones: %w", err)
+	}
+	return zones, nil
+}
+
+// AllTx reads all thermal zones inside an existing transaction.
+func (r *ThermalZoneRepository) AllTx(ctx context.Context, tx *gorm.DB) ([]model.ThermalZone, error) {
+	var zones []model.ThermalZone
+	if err := tx.WithContext(ctx).Order("zone_code ASC").Find(&zones).Error; err != nil {
+		return nil, fmt.Errorf("list thermal zones in tx: %w", err)
+	}
+	return zones, nil
+}
+
+// Begin returns a transaction on the repository connection.
+func (r *ThermalZoneRepository) Begin(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(fn)
+}
+
+// DB exposes the connection for cross-repository transactions.
+func (r *ThermalZoneRepository) DB() *gorm.DB { return r.db }
 
 func (r *ThermalZoneRepository) RackCount(ctx context.Context, zoneID uint) (int64, error) {
 	var count int64

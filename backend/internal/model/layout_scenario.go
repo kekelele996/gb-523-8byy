@@ -19,6 +19,8 @@ type LayoutScenario struct {
 	Score                    float64                  `gorm:"not null;default:0" json:"score"`
 	AlgorithmVersion         string                   `gorm:"size:32;not null;default:'thermal-v1'" json:"algorithm_version"`
 	Version                  uint                     `gorm:"not null;default:1" json:"version"`
+	FrozenAt                 *time.Time               `gorm:"index" json:"frozen_at"`
+	SourceScenarioID         *uint                    `gorm:"index" json:"source_scenario_id"`
 	CreatedBy                uint                     `gorm:"not null;index" json:"created_by"`
 	ApprovedBy               *uint                    `gorm:"index" json:"approved_by"`
 	CreatedAt                time.Time                `json:"created_at"`

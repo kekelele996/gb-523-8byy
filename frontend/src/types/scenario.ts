@@ -35,6 +35,29 @@ export interface ZoneThermalResult {
   cooling_margin_kw: number;
 }
 
+export type InputDriftKind = 'added' | 'removed' | 'changed';
+
+export interface InputDriftEntry {
+  kind: InputDriftKind;
+  entity_type: 'thermal_zone' | 'rack' | 'equipment_load';
+  entity_id: number;
+  identifier: string;
+  field?: string;
+  frozen?: number;
+  current?: number;
+  detail?: string;
+}
+
+export interface InputDriftReport {
+  added_count: number;
+  removed_count: number;
+  changed_count: number;
+  total_count: number;
+  has_drift: boolean;
+  blocking_reason?: string;
+  entries: InputDriftEntry[];
+}
+
 export interface LayoutScenario {
   id: number;
   name: string;
@@ -47,6 +70,9 @@ export interface LayoutScenario {
   score: number;
   version: number;
   algorithm_version: string;
+  frozen_at: string | null;
+  source_scenario_id: number | null;
+  input_drift: InputDriftReport | null;
   created_by: number;
   approved_by: number | null;
   has_critical_violation: boolean;

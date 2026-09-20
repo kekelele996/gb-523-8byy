@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
-import { DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
@@ -16,14 +16,15 @@ import { LoadApi } from '../api/load.api';
 import { RackApi } from '../api/rack.api';
 import { ScenarioApi } from '../api/scenario.api';
 import { ConstraintBadgeComponent } from '../components/common/constraint-badge.component';
+import { FreezeSummaryComponent } from '../components/common/freeze-summary.component';
 import { useAuth } from '../hooks/use-auth';
 import { useScenarioEvaluation } from '../hooks/use-scenario-evaluation';
 import { ScenarioStore } from '../stores/scenario.store';
 
 @Component({
   standalone: true,
-  imports: [DecimalPipe, ReactiveFormsModule, MatButtonModule, MatCheckboxModule, MatFormFieldModule, MatInputModule, MatSelectModule,
-    ConstraintBadgeComponent, LucideAngularModule],
+  imports: [DatePipe, DecimalPipe, ReactiveFormsModule, MatButtonModule, MatCheckboxModule, MatFormFieldModule, MatInputModule, MatSelectModule,
+    ConstraintBadgeComponent, FreezeSummaryComponent, LucideAngularModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page planner-page">
@@ -53,11 +54,23 @@ import { ScenarioStore } from '../stores/scenario.store';
         @if (selected(); as active) {
           <span [class]="'status ' + active.scenario_status">{{ active.scenario_status }}</span>
           <span class="algorithm">{{ active.algorithm_version }}</span>
+          <span class="frozen-meta"><lucide-icon name="snowflake" [size]="12" /> {{ active.frozen_at ? (active.frozen_at | date:'MMM d, HH:mm') : 'not frozen' }}</span>
           <span class="control-spacer"></span>
           @if (active.scenario_status === 'draft' && canPlan()) {<button mat-flat-button color="primary" (click)="evaluate()" [disabled]="store.evaluating()"><lucide-icon name="play" [size]="16" /> {{ store.evaluating() ? 'Evaluating...' : 'Evaluate layout' }}</button>}
-          @if (active.scenario_status === 'pending_review' && canApprove()) {<button mat-flat-button color="primary" (click)="transition('approved')" [disabled]="active.has_critical_violation"><lucide-icon name="check-circle-2" [size]="16" /> Approve</button>}
+          @if (active.scenario_status === 'pending_review' && canApprove()) {<button mat-flat-button color="primary" (click)="transition('approved')" [disabled]="approvalBlocked(active)"><lucide-icon name="check-circle-2" [size]="16" /> Approve</button>}
+          @if (active.scenario_status === 'pending_review' && canPlan()) {<button mat-stroked-button (click)="rebuild(active)" [disabled]="rebuildingId() === active.id"><lucide-icon name="refresh-cw" [size]="16" /> {{ rebuildingId() === active.id ? 'Rebuilding...' : 'Rebuild from latest data' }}</button>}
         }
       </section>
+
+      @if (selected(); as active) {
+        @if (active.scenario_status === 'pending_review') {
+          <app-freeze-summary [scenario]="active">
+            <span rebuildAction>
+              @if (canPlan()) {<button mat-flat-button color="primary" (click)="rebuild(active)" [disabled]="rebuildingId() === active.id"><lucide-icon name="refresh-cw" [size]="15" /> {{ rebuildingId() === active.id ? 'Rebuilding...' : 'Rebuild & re-evaluate' }}</button>}
+            </span>
+          </app-freeze-summary>
+        }
+      }
 
       @if (selected(); as active) {
         <section class="metric-strip">
@@ -113,7 +126,7 @@ import { ScenarioStore } from '../stores/scenario.store';
     </div>
   `,
   styles: [`
-    .scenario-builder{margin-bottom:16px;padding:16px;background:#fff;border:1px solid #aeb6bd;border-top:3px solid #cf3f2e}.scenario-builder form{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px}.load-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 12px;max-height:180px;overflow:auto;padding:2px}.load-picker strong,.load-picker small{display:block;letter-spacing:0}.load-picker strong{font-size:11px}.load-picker small{color:#68717a;font-size:9px}.builder-actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:8px;border-top:1px solid #d8dde1;padding-top:10px}.builder-actions>span{margin-right:auto;color:#68717a;font-size:11px}.control-bar{min-height:66px;display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:9px 12px;background:#fff;border:1px solid #d8dde1}.control-bar mat-form-field{width:min(440px,40vw)}.control-spacer{flex:1}.algorithm{color:#68717a;font:600 10px/1 monospace}.planner-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}.layout-surface{min-width:0;background:#23282d;border:1px solid #101214;color:#eef1f3}.surface-header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 15px;border-bottom:1px solid #42494f}.surface-header strong,.surface-header small{display:block;letter-spacing:0}.surface-header strong{font-size:13px}.surface-header small{margin-top:3px;color:#aeb6bc;font-size:10px}.candidate-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding:14px}.candidate-rack{height:158px;display:grid;grid-template-rows:27px 1fr 28px;min-width:0;background:#15191d;border:1px solid #596168;border-top:4px solid #4b9a77;border-radius:3px;overflow:hidden}.candidate-rack.warm{border-top-color:#d79318}.candidate-rack.hot{border-top-color:#cf3f2e}.candidate-rack.blocked{opacity:.58;border-top-color:#778087}.candidate-rack header,.candidate-rack footer{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 8px;background:#2b3136}.candidate-rack header strong{font-size:11px}.candidate-rack header span{color:#aeb6bc;font-size:9px}.assigned-loads{display:grid;align-content:start;gap:4px;padding:7px;overflow:auto}.assigned-loads>div{display:grid;grid-template-columns:14px minmax(0,1fr) auto;align-items:center;gap:4px;padding:5px;color:#e8ecee;background:#30373c;border-left:2px solid #d79318;font-size:9px}.assigned-loads>div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.assigned-loads>div strong{font-size:8px}.vacant{margin:auto;color:#7f8990;font-size:9px;text-transform:uppercase}.candidate-rack footer{color:#b8c0c5;font-size:8px}.candidate-rack footer span{display:flex;align-items:center;gap:3px}.evidence-panel{background:#fff;border:1px solid #d8dde1}.evidence-section{padding:14px}.evidence-section+ .evidence-section{border-top:1px solid #d8dde1}.evidence-section h2{margin:0 0 9px;font-size:12px;text-transform:uppercase}.thermal-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #e5e8ea}.thermal-row:last-child{border-bottom:0}.thermal-row strong,.thermal-row small{display:block;letter-spacing:0}.thermal-row strong{font-size:11px}.thermal-row small{margin-top:3px;color:#68717a;font-size:9px}.temperature{text-align:right}.temperature strong{font-size:15px}.violation{padding:11px 0;border-bottom:1px solid #e5e8ea}.violation:last-child{border-bottom:0}.violation p{margin:7px 0 4px;font-size:11px;line-height:1.4}.violation>small{color:#68717a;font-size:9px}.aside-empty{padding:18px 4px;color:#68717a;font-size:11px;text-align:center}.assignments-panel{margin-top:16px}
+    .scenario-builder{margin-bottom:16px;padding:16px;background:#fff;border:1px solid #aeb6bd;border-top:3px solid #cf3f2e}.scenario-builder form{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px}.load-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 12px;max-height:180px;overflow:auto;padding:2px}.load-picker strong,.load-picker small{display:block;letter-spacing:0}.load-picker strong{font-size:11px}.load-picker small{color:#68717a;font-size:9px}.builder-actions{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:8px;border-top:1px solid #d8dde1;padding-top:10px}.builder-actions>span{margin-right:auto;color:#68717a;font-size:11px}.control-bar{min-height:66px;display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:9px 12px;background:#fff;border:1px solid #d8dde1}.control-bar mat-form-field{width:min(440px,40vw)}.control-spacer{flex:1}.algorithm{color:#68717a;font:600 10px/1 monospace}.frozen-meta{display:inline-flex;align-items:center;gap:4px;color:#4f5860;font-size:10px;font-weight:600}.planner-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:start}.layout-surface{min-width:0;background:#23282d;border:1px solid #101214;color:#eef1f3}.surface-header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 15px;border-bottom:1px solid #42494f}.surface-header strong,.surface-header small{display:block;letter-spacing:0}.surface-header strong{font-size:13px}.surface-header small{margin-top:3px;color:#aeb6bc;font-size:10px}.candidate-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding:14px}.candidate-rack{height:158px;display:grid;grid-template-rows:27px 1fr 28px;min-width:0;background:#15191d;border:1px solid #596168;border-top:4px solid #4b9a77;border-radius:3px;overflow:hidden}.candidate-rack.warm{border-top-color:#d79318}.candidate-rack.hot{border-top-color:#cf3f2e}.candidate-rack.blocked{opacity:.58;border-top-color:#778087}.candidate-rack header,.candidate-rack footer{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 8px;background:#2b3136}.candidate-rack header strong{font-size:11px}.candidate-rack header span{color:#aeb6bc;font-size:9px}.assigned-loads{display:grid;align-content:start;gap:4px;padding:7px;overflow:auto}.assigned-loads>div{display:grid;grid-template-columns:14px minmax(0,1fr) auto;align-items:center;gap:4px;padding:5px;color:#e8ecee;background:#30373c;border-left:2px solid #d79318;font-size:9px}.assigned-loads>div span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.assigned-loads>div strong{font-size:8px}.vacant{margin:auto;color:#7f8990;font-size:9px;text-transform:uppercase}.candidate-rack footer{color:#b8c0c5;font-size:8px}.candidate-rack footer span{display:flex;align-items:center;gap:3px}.evidence-panel{background:#fff;border:1px solid #d8dde1}.evidence-section{padding:14px}.evidence-section+ .evidence-section{border-top:1px solid #d8dde1}.evidence-section h2{margin:0 0 9px;font-size:12px;text-transform:uppercase}.thermal-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #e5e8ea}.thermal-row:last-child{border-bottom:0}.thermal-row strong,.thermal-row small{display:block;letter-spacing:0}.thermal-row strong{font-size:11px}.thermal-row small{margin-top:3px;color:#68717a;font-size:9px}.temperature{text-align:right}.temperature strong{font-size:15px}.violation{padding:11px 0;border-bottom:1px solid #e5e8ea}.violation:last-child{border-bottom:0}.violation p{margin:7px 0 4px;font-size:11px;line-height:1.4}.violation>small{color:#68717a;font-size:9px}.aside-empty{padding:18px 4px;color:#68717a;font-size:11px;text-align:center}.assignments-panel{margin-top:16px}
     @media(max-width:1150px){.planner-grid{grid-template-columns:1fr}.evidence-panel{display:grid;grid-template-columns:1fr 1fr}.evidence-section+.evidence-section{border-top:0;border-left:1px solid #d8dde1}}@media(max-width:760px){.scenario-builder form{grid-template-columns:1fr}.control-bar{align-items:stretch;flex-wrap:wrap}.control-bar mat-form-field{width:100%}.control-spacer{display:none}.candidate-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:9px}.evidence-panel{grid-template-columns:1fr}.evidence-section+.evidence-section{border-left:0;border-top:1px solid #d8dde1}}@media(max-width:430px){.candidate-grid{grid-template-columns:1fr}}
   `]
 })
@@ -126,6 +139,7 @@ export class PlannerPage {
   readonly selected = this.store.selected;
   readonly createOpen = signal(false);
   readonly creating = signal(false);
+  readonly rebuildingId = signal<number | null>(null);
   readonly selectedLoadIds = signal<Set<number>>(new Set());
   readonly readyLoads = computed(() => this.loads().filter((load) => load.load_status === 'ready'));
   readonly criticalCount = computed(() => this.selected()?.violations.filter((item) => item.severity === 'critical').length ?? 0);
@@ -134,12 +148,26 @@ export class PlannerPage {
   constructor(private readonly fb: FormBuilder, private readonly scenarioApi: ScenarioApi, private readonly rackApi: RackApi, private readonly loadApi: LoadApi, readonly store: ScenarioStore, private readonly snack: MatSnackBar) { this.load(); }
   canPlan(): boolean { return this.auth.hasRole('planner', 'admin'); }
   canApprove(): boolean { return this.auth.hasRole('reviewer', 'admin'); }
+  approvalBlocked(scenario: LayoutScenario): boolean { return scenario.has_critical_violation || (scenario.input_drift?.has_drift ?? false); }
   load(): void { forkJoin({scenarios: this.scenarioApi.list(), racks: this.rackApi.list(), loads: this.loadApi.list()}).subscribe(({scenarios, racks, loads}) => { this.scenarios.set(scenarios.items); this.racks.set(racks.items); this.loads.set(loads.items); const current = this.selected(); const selected = scenarios.items.find((item) => item.id === current?.id) ?? scenarios.items[0] ?? null; this.store.select(selected); if (this.selectedLoadIds().size === 0) this.selectedLoadIds.set(new Set(loads.items.filter((item) => item.load_status === 'ready').map((item) => item.id))); }); }
   selectScenario(id: number): void { this.store.select(this.scenarios().find((item) => item.id === id) ?? null); }
   toggleLoad(id: number, checked: boolean): void { const next = new Set(this.selectedLoadIds()); checked ? next.add(id) : next.delete(id); this.selectedLoadIds.set(next); }
   createScenario(): void { if (this.form.invalid || this.selectedLoadIds().size === 0) return; this.creating.set(true); this.scenarioApi.create(this.form.controls.name.value, [...this.selectedLoadIds()]).pipe(finalize(() => this.creating.set(false))).subscribe((scenario) => { this.createOpen.set(false); this.form.reset(); this.scenarios.update((items) => [scenario, ...items]); this.store.select(scenario); this.snack.open('Draft scenario created', undefined, {duration: 2200}); }); }
   evaluate(): void { const scenario = this.selected(); if (!scenario) return; this.evaluation.evaluate(scenario).subscribe((result) => { this.store.select(result); this.scenarios.update((items) => items.map((item) => item.id === result.id ? result : item)); this.snack.open(`Evaluation complete: score ${result.score.toFixed(1)}`, undefined, {duration: 2800}); }); }
   transition(target: ScenarioStatus): void { const scenario = this.selected(); if (!scenario) return; this.scenarioApi.transition(scenario.id, scenario.version, target, 'Reviewed in planning workbench').subscribe((result) => { this.store.select(result); this.scenarios.update((items) => items.map((item) => item.id === result.id ? result : item)); this.snack.open(`Scenario ${target.replace('_', ' ')}`, undefined, {duration: 2200}); }); }
+  rebuild(scenario: LayoutScenario): void {
+    this.rebuildingId.set(scenario.id);
+    this.scenarioApi.rebuild(scenario.id, scenario.version).pipe(finalize(() => this.rebuildingId.set(null))).subscribe({
+      next: (rebuilt) => {
+        // The old scenario is now archived but stays in the list for review;
+        // the rebuilt replacement is selected directly.
+        this.scenarios.update((items) => [rebuilt, ...items.filter((item) => item.id !== rebuilt.id)]);
+        this.store.select(rebuilt);
+        this.snack.open(`Rebuilt as #${rebuilt.id}; old scenario archived and remains queryable`, undefined, {duration: 3200});
+      },
+      error: () => this.snack.open('Rebuild rejected; the original scenario was not changed', undefined, {duration: 3200}),
+    });
+  }
   assignmentsFor(rackId: number): RackAssignment[] { return this.selected()?.assignments.filter((item) => item.rack_id === rackId) ?? []; }
   rackPower(rackId: number): number { return this.assignmentsFor(rackId).reduce((sum, item) => sum + item.power_kw, 0); }
   rackHeat(rackId: number): number { return this.assignmentsFor(rackId).reduce((sum, item) => sum + item.heat_kw, 0); }

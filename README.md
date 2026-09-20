@@ -116,12 +116,24 @@ output/                     验收报告与 Browser 截图
 | `GET/POST /api/v1/racks`、`GET/PUT /api/v1/racks/:id` | 机柜查询与乐观锁更新 |
 | `GET/POST /api/v1/loads`、`GET/PUT /api/v1/loads/:id` | 设备负载查询与维护 |
 | `POST /api/v1/loads/validate` | 批量校验 ready 输入 |
-| `GET/POST /api/v1/scenarios` | 方案查询与创建 |
-| `POST /api/v1/scenarios/:id/evaluate` | 版本校验后执行规划 |
-| `POST /api/v1/scenarios/:id/transition` | 复核、批准或归档状态流 |
+| `GET/POST /api/v1/scenarios` | 方案查询与创建（创建即冻结全部规划输入） |
+| `POST /api/v1/scenarios/:id/evaluate` | 版本校验后按冻结快照执行规划 |
+| `POST /api/v1/scenarios/:id/rebuild` | 差异阻塞后按最新数据重建并复评，旧方案归档可查 |
+| `POST /api/v1/scenarios/:id/transition` | 复核、批准或归档状态流（批准时事务内复算输入差异） |
 | `GET /api/v1/scenarios/:id/compare?right_id=` | 比较两个方案 |
 | `GET /api/v1/audit-events` | 审计检索 |
 | `GET /healthz`、`GET /readyz` | 存活与数据库就绪检查 |
+
+## 输入冻结与审批一致性
+
+草稿创建时一次性冻结所选负载、全部热区冷量/送风与回风温度/邻接参数、全部机柜功率/气流/U 位/状态。评估始终使用冻结快照运行，之后外部对热区、机柜或负载的修改不会改变原方案结果。
+
+进入 `pending_review` 后，后端用冻结快照与最新现状做差异比对，响应中的 `input_drift` 给出 `added`（多出）、`removed`（缺失）和 `changed`（数值或状态变化）条目、汇总计数与阻塞原因：
+
+- 存在差异时禁止批准，返回 `422 INPUT_DRIFT_BLOCKED`；前端规划页与审计页显示冻结时间、差异摘要与阻塞原因，刷新后保持一致。
+- 只能由规划员/管理员调用 `rebuild`：在单个数据库事务内锁定原方案、按最新数据重建冻结快照并重跑规划，新方案直接进入待复核（带 `source_scenario_id`），旧方案归档但仍可查询。
+- 并发重建在源方案行上串行化，乐观锁保证只有一次成功；任一步失败整体回滚，原方案与审批状态不变。
+- 批准同样在事务内锁定方案行并重读现状，差异、关键违规或版本变化任一存在都会回滚。
 
 ## 模型假设与安全边界
 
@@ -160,7 +172,7 @@ go test ./backend/...
 
 - `JWT_SECRET must contain at least 32 characters`：替换 `.env` 中的密钥并重启后端。
 - 前端返回 502：检查 `docker compose ps`，确认 `db` 和 `backend` 均为 healthy。
-- 方案无法批准：在规划页或审计页查看 `critical` 约束；修改输入后退回 draft 并重新评估。
+- 方案无法批准：在规划页或审计页查看 `critical` 约束；修改输入后退回 draft 并重新评估。若提示 `INPUT_DRIFT_BLOCKED`，说明冻结输入与现状已有差异，使用 “Rebuild & re-evaluate” 按最新数据重建后再批准，旧方案会归档保留。
 - 更新机柜或方案返回 409：数据版本已变化，刷新后基于最新 `version` 再提交。
 - 端口冲突：只修改 `.env` 中三个主机端口，容器端口保持不变。
 

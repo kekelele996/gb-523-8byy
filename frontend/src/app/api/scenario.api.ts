@@ -10,6 +10,7 @@ export class ScenarioApi {
   get(id: number): Observable<LayoutScenario> { return this.api.get(`/scenarios/${id}`); }
   create(name: string, loadIds: number[]): Observable<LayoutScenario> { return this.api.post('/scenarios', {name, load_ids: loadIds}); }
   evaluate(id: number, version: number): Observable<LayoutScenario> { return this.api.post(`/scenarios/${id}/evaluate`, {version}); }
+  rebuild(id: number, version: number): Observable<LayoutScenario> { return this.api.post(`/scenarios/${id}/rebuild`, {version}); }
   transition(id: number, version: number, target: ScenarioStatus, reason: string): Observable<LayoutScenario> {
     return this.api.post(`/scenarios/${id}/transition`, {version, target_status: target, reason});
   }
