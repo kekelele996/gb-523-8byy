@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"datacenter-thermal-capacity-planner/backend/internal/constants"
 	"datacenter-thermal-capacity-planner/backend/internal/model"
@@ -15,6 +16,10 @@ type CreateLayoutScenarioRequest struct {
 }
 
 type EvaluateScenarioRequest struct {
+	Version uint `json:"version" binding:"required"`
+}
+
+type RebuildScenarioRequest struct {
 	Version uint `json:"version" binding:"required"`
 }
 
@@ -74,6 +79,13 @@ type ScenarioResponse struct {
 	CreatedBy            uint                     `json:"created_by"`
 	ApprovedBy           *uint                    `json:"approved_by"`
 	HasCriticalViolation bool                     `json:"has_critical_violation"`
+	InputFrozenAt        *time.Time               `json:"input_frozen_at"`
+	InputDiff            ScenarioInputDiff        `json:"input_diff"`
+	RebuiltFromID        *uint                    `json:"rebuilt_from_id"`
+	SupersededByID       *uint                    `json:"superseded_by_id"`
+	IsSuperseded         bool                     `json:"is_superseded"`
+	ApprovalBlocked      bool                     `json:"approval_blocked"`
+	ApprovalBlockReason  string                   `json:"approval_block_reason"`
 }
 
 type ScenarioComparison struct {
@@ -108,7 +120,10 @@ func DecodeScenario(value model.LayoutScenario) ScenarioResponse {
 		TotalPowerKW: value.TotalPowerKW, PeakTempC: value.PeakTempC,
 		Score: value.Score, Version: value.Version, AlgorithmVersion: value.AlgorithmVersion,
 		CreatedBy: value.CreatedBy, ApprovedBy: value.ApprovedBy,
+		InputFrozenAt: value.InputFrozenAt, RebuiltFromID: value.RebuiltFromID,
+		SupersededByID: value.SupersededByID, IsSuperseded: value.IsSuperseded(),
 		Assignments: []RackAssignment{}, ZoneResults: []ZoneThermalResult{}, Violations: []ConstraintViolation{},
+		InputDiff: DecodeScenarioInputDiff(value.InputDiffJSON),
 	}
 	_ = json.Unmarshal([]byte(value.RackAssignmentsJSON), &response.Assignments)
 	_ = json.Unmarshal([]byte(value.ZoneResultsJSON), &response.ZoneResults)
@@ -119,5 +134,28 @@ func DecodeScenario(value model.LayoutScenario) ScenarioResponse {
 			break
 		}
 	}
+	response.ApprovalBlocked, response.ApprovalBlockReason = ApprovalBlockers(response)
 	return response
+}
+
+// ApprovalBlockers derives why a pending review scenario cannot be approved.
+// Drift against frozen inputs blocks first because the stored result no longer
+// represents current data; the only remedy is a rebuild and re-evaluation.
+func ApprovalBlockers(response ScenarioResponse) (bool, string) {
+	if response.ScenarioStatus != constants.ScenarioPendingReview {
+		return false, ""
+	}
+	if response.InputDiff.HasChanges() {
+		return true, "frozen inputs differ from current data (" + response.InputDiff.Summary + "); rebuild the scenario from the latest data and re-evaluate before approval"
+	}
+	if response.InputDiff.ComputedAt.IsZero() || response.InputFrozenAt == nil {
+		return true, "frozen input evidence is missing; rebuild the scenario to recapture inputs before approval"
+	}
+	if response.IsSuperseded {
+		return true, "this scenario was superseded by a rebuild and can no longer be approved"
+	}
+	if response.HasCriticalViolation {
+		return true, "critical constraint violations remain"
+	}
+	return false, ""
 }

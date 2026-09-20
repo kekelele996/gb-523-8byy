@@ -1,5 +1,26 @@
 export type ScenarioStatus = 'draft' | 'evaluating' | 'pending_review' | 'approved' | 'archived';
 
+export type InputDiffChangeType = 'added' | 'missing' | 'changed';
+
+export interface InputDiffEntry {
+  entity_type: 'thermal_zone' | 'rack' | 'equipment_load';
+  entity_id: number;
+  label: string;
+  field: string;
+  change_type: InputDiffChangeType;
+  frozen: number;
+  current: number;
+  detail: string;
+}
+
+export interface ScenarioInputDiff {
+  added: InputDiffEntry[];
+  missing: InputDiffEntry[];
+  changed: InputDiffEntry[];
+  summary: string;
+  computed_at: string | null;
+}
+
 export interface ConstraintViolation {
   code: string;
   severity: 'critical' | 'warning';
@@ -50,6 +71,13 @@ export interface LayoutScenario {
   created_by: number;
   approved_by: number | null;
   has_critical_violation: boolean;
+  input_frozen_at: string | null;
+  input_diff: ScenarioInputDiff;
+  rebuilt_from_id: number | null;
+  superseded_by_id: number | null;
+  is_superseded: boolean;
+  approval_blocked: boolean;
+  approval_block_reason: string;
 }
 
 export interface ScenarioComparison {

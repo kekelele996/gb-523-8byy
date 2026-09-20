@@ -96,6 +96,7 @@ func (r *LayoutScenarioRepository) BeginEvaluation(ctx context.Context, id, expe
 type EvaluationUpdate struct {
 	AssignmentsJSON string
 	SnapshotJSON    string
+	DiffJSON        string
 	ZoneResultsJSON string
 	ViolationsJSON  string
 	TotalPowerKW    float64
@@ -110,6 +111,7 @@ func (r *LayoutScenarioRepository) FinishEvaluation(ctx context.Context, scenari
 			Updates(map[string]any{
 				"rack_assignments_json":      update.AssignmentsJSON,
 				"input_snapshot_json":        update.SnapshotJSON,
+				"input_diff_json":            update.DiffJSON,
 				"zone_results_json":          update.ZoneResultsJSON,
 				"constraint_violations_json": update.ViolationsJSON,
 				"total_power_kw":             update.TotalPowerKW,
@@ -127,6 +129,93 @@ func (r *LayoutScenarioRepository) FinishEvaluation(ctx context.Context, scenari
 		entry.EntityID = scenario.ID
 		entry.BeforeSummary = string(constants.ScenarioEvaluating)
 		entry.AfterSummary = fmt.Sprintf("%s score=%.1f", constants.ScenarioPendingReview, update.Score)
+		return r.audit.RecordWithDB(ctx, tx, entry)
+	})
+}
+
+// BeginRebuild atomically turns an existing pending-review scenario into a
+// superseded one and creates the replacement in "evaluating" state. The unique
+// index on rebuilt_from_id means only one concurrent rebuild can succeed.
+func (r *LayoutScenarioRepository) BeginRebuild(ctx context.Context, sourceID, expectedVersion uint, rebuilt *model.LayoutScenario, beginEntry, supersedeEntry audit.Entry) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var source model.LayoutScenario
+		if err := tx.First(&source, sourceID).Error; err != nil {
+			return web.NotFound("layout scenario")
+		}
+		if source.Version != expectedVersion {
+			return web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario was changed by another user", nil)
+		}
+		if source.ScenarioStatus != constants.ScenarioPendingReview {
+			return web.Conflict("SCENARIO_REBUILD_NOT_ALLOWED", "only pending review scenarios can be rebuilt", nil)
+		}
+		if source.SupersededByID != nil {
+			return web.Conflict("SCENARIO_ALREADY_REBUILT", "scenario was already rebuilt; open the replacement scenario", nil)
+		}
+		if err := tx.Create(rebuilt).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return web.Conflict("SCENARIO_ALREADY_REBUILT", "a rebuild of this scenario is already in progress", err)
+			}
+			return fmt.Errorf("create rebuilt scenario: %w", err)
+		}
+		result := tx.Model(&model.LayoutScenario{}).
+			Where("id = ? AND version = ? AND scenario_status = ? AND superseded_by_id IS NULL", sourceID, expectedVersion, constants.ScenarioPendingReview).
+			Update("superseded_by_id", rebuilt.ID)
+		if result.Error != nil {
+			return fmt.Errorf("supersede rebuilt scenario: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_ALREADY_REBUILT", "a rebuild of this scenario is already in progress", nil)
+		}
+		beginEntry.EntityID = rebuilt.ID
+		if err := r.audit.RecordWithDB(ctx, tx, beginEntry); err != nil {
+			return err
+		}
+		supersedeEntry.EntityID = sourceID
+		return r.audit.RecordWithDB(ctx, tx, supersedeEntry)
+	})
+}
+
+// DiscardRebuild removes an evaluating replacement when its engine run failed,
+// leaving the source scenario and its approval state untouched.
+func (r *LayoutScenarioRepository) DiscardRebuild(ctx context.Context, rebuiltID, sourceID uint, entry audit.Entry) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		deleteResult := tx.Where("id = ? AND scenario_status = ?", rebuiltID, constants.ScenarioEvaluating).
+			Delete(&model.LayoutScenario{})
+		if deleteResult.Error != nil {
+			return fmt.Errorf("discard rebuilt scenario: %w", deleteResult.Error)
+		}
+		if deleteResult.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_REBUILD_STATE", "rebuilt scenario is no longer evaluating", nil)
+		}
+		result := tx.Model(&model.LayoutScenario{}).
+			Where("id = ? AND superseded_by_id = ?", sourceID, rebuiltID).
+			Update("superseded_by_id", nil)
+		if result.Error != nil {
+			return fmt.Errorf("restore superseded scenario: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_REBUILD_STATE", "source scenario is not linked to this rebuild", nil)
+		}
+		entry.EntityID = rebuiltID
+		return r.audit.RecordWithDB(ctx, tx, entry)
+	})
+}
+
+// RefreshInputDiff persists a freshly recomputed drift report without changing
+// the status or optimistic-lock version, so reviewer pages stay consistent
+// after a refresh.
+func (r *LayoutScenarioRepository) RefreshInputDiff(ctx context.Context, id uint, diffJSON string, entry audit.Entry) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.LayoutScenario{}).
+			Where("id = ? AND scenario_status = ?", id, constants.ScenarioPendingReview).
+			Update("input_diff_json", diffJSON)
+		if result.Error != nil {
+			return fmt.Errorf("refresh scenario input diff: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_REVIEW_STATE", "input drift can only be refreshed for pending review scenarios", nil)
+		}
+		entry.EntityID = id
 		return r.audit.RecordWithDB(ctx, tx, entry)
 	})
 }

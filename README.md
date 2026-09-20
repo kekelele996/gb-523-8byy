@@ -117,8 +117,9 @@ output/                     验收报告与 Browser 截图
 | `GET/POST /api/v1/loads`、`GET/PUT /api/v1/loads/:id` | 设备负载查询与维护 |
 | `POST /api/v1/loads/validate` | 批量校验 ready 输入 |
 | `GET/POST /api/v1/scenarios` | 方案查询与创建 |
-| `POST /api/v1/scenarios/:id/evaluate` | 版本校验后执行规划 |
-| `POST /api/v1/scenarios/:id/transition` | 复核、批准或归档状态流 |
+| `POST /api/v1/scenarios/:id/evaluate` | 版本校验后执行规划（基于冻结输入快照） |
+| `POST /api/v1/scenarios/:id/rebuild` | 待复核方案按最新数据重建并复评，旧方案保留可查并标记 superseded |
+| `POST /api/v1/scenarios/:id/transition` | 复核、批准或归档状态流；冻结输入与现状有差异时禁止批准 |
 | `GET /api/v1/scenarios/:id/compare?right_id=` | 比较两个方案 |
 | `GET /api/v1/audit-events` | 审计检索 |
 | `GET /healthz`、`GET /readyz` | 存活与数据库就绪检查 |

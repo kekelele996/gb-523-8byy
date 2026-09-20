@@ -12,6 +12,10 @@ type LayoutScenario struct {
 	ScenarioStatus           constants.ScenarioStatus `gorm:"size:32;not null;index" json:"scenario_status"`
 	RackAssignmentsJSON      string                   `gorm:"type:text;not null;default:'[]'" json:"rack_assignments_json"`
 	InputSnapshotJSON        string                   `gorm:"type:text;not null;default:'{}'" json:"input_snapshot_json"`
+	InputFrozenAt            *time.Time               `gorm:"index" json:"input_frozen_at"`
+	InputDiffJSON            string                   `gorm:"type:text;not null;default:'{}'" json:"input_diff_json"`
+	RebuiltFromID            *uint                    `gorm:"uniqueIndex" json:"rebuilt_from_id"`
+	SupersededByID           *uint                    `gorm:"index" json:"superseded_by_id"`
 	ZoneResultsJSON          string                   `gorm:"type:text;not null;default:'[]'" json:"zone_results_json"`
 	TotalPowerKW             float64                  `gorm:"not null;default:0" json:"total_power_kw"`
 	PeakTempC                float64                  `gorm:"not null;default:0" json:"peak_temp_c"`
@@ -33,4 +37,8 @@ func (s LayoutScenario) IsEditable() bool {
 
 func (s LayoutScenario) IsTerminal() bool {
 	return s.ScenarioStatus == constants.ScenarioArchived
+}
+
+func (s LayoutScenario) IsSuperseded() bool {
+	return s.SupersededByID != nil
 }
